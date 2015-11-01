@@ -17,6 +17,7 @@
 from __future__ import print_function
 
 import codecs
+from collections import OrderedDict
 import csv
 import os
 
@@ -25,7 +26,7 @@ import six
 
 from six.moves.urllib.parse import urlparse
 
-from mediagoblin.db.models import LocalUser
+from mediagoblin.db.models import LocalUser, Collection
 from mediagoblin.gmg_commands import util as commands_util
 from mediagoblin.submit.lib import (
     submit_media, get_upload_file_limits,
@@ -52,7 +53,42 @@ u"""Path to the csv file containing metadata information."""))
     subparser.add_argument(
         '--celery',
         action='store_true',
-        help=_(u"Don't process eagerly, pass off to celery"))
+        help=_("Don't process eagerly, pass off to celery. WARNING: If there is an error during processing (transcoding error, etc) you will not see it here, and this script will continue adding media from the csv. This may be relevant if, for instance, you're adding media to a collection, and the order of entries is important. If such an error were to occur in the middle of your csv, you might have to delete many items before retrying the problem file in order to keep order correct."))
+
+def _get_collection_slugs(media_data):
+    return {
+        collection_slug.strip() for collection_slug
+        in media_data.get('collections', u'').split(',')
+        if collection_slug.strip()
+    }
+
+
+def _get_collections_lookup(user, media_metadata):
+    all_collection_slugs = set.union(set(), *(
+        _get_collection_slugs(media_data)
+        for media_data in media_metadata.itervalues()
+    ))
+    all_collections_lookup = {
+        c.slug: c
+        for c in Collection.query.filter_by(
+            actor=user.id,
+            type=Collection.USER_DEFINED_TYPE,
+        ).filter(
+            Collection.slug.in_(
+                tuple(all_collection_slugs)
+            ),
+        )
+    }
+    invalid_collections_slugs = (
+        set(all_collection_slugs)
+        - set(c.slug for c in all_collections_lookup.itervalues())
+    )
+    if invalid_collections_slugs:
+        raise ValueError(
+            'Couldn\'t find these collections: %s'
+            % ", ".join(invalid_collections_slugs)
+        )
+    return all_collections_lookup
 
 
 def batchaddmedia(args):
@@ -74,11 +110,9 @@ def batchaddmedia(args):
         return
 
     upload_limit, max_file_size = get_upload_file_limits(user)
-    temp_files = []
 
     if os.path.isfile(args.metadata_path):
         metadata_path = args.metadata_path
-
     else:
         error = _(u'File at {path} not found, use -h flag for help'.format(
                     path=args.metadata_path))
@@ -101,7 +135,21 @@ def batchaddmedia(args):
         contents = all_metadata.read()
         media_metadata = parse_csv_file(contents)
 
-    for media_id, file_metadata in media_metadata.iteritems():
+    # Grab the collections, or fail before changing anything
+    all_collections_lookup = _get_collections_lookup(user, media_metadata)
+
+    for media_id, media_data in media_metadata.iteritems():
+        file_metadata = {
+            k:v
+            for (k, v)
+            in media_data.iteritems()
+            if k in {'location',
+                     'license',
+                     'title',
+                     'dc:title',
+                     'description',
+                     'dc:description'}
+        }
         files_attempted += 1
         # In case the metadata was not uploaded initialize an empty dictionary.
         json_ld_metadata = compact_and_validate({})
@@ -115,6 +163,7 @@ def batchaddmedia(args):
         title = file_metadata.get('title') or file_metadata.get('dc:title')
         description = (file_metadata.get('description') or
             file_metadata.get('dc:description'))
+        tags_string = media_data.get('tags', u'')
 
         license = file_metadata.get('license')
         try:
@@ -130,6 +179,11 @@ Metadata was not uploaded.""".format(
 
         url = urlparse(original_location)
         filename = url.path.split()[-1]
+
+        collections = [
+            all_collections_lookup[collection_slug]
+            for collection_slug in _get_collection_slugs(media_data)
+        ]
 
         if url.scheme == 'http':
             res = requests.get(url.geturl(), stream=True)
@@ -159,8 +213,10 @@ FAIL: Local file {filename} could not be accessed.
                 description=maybe_unicodeify(description),
                 license=maybe_unicodeify(license),
                 metadata=json_ld_metadata,
-                tags_string=u"",
-                upload_limit=upload_limit, max_file_size=max_file_size)
+                tags_string=tags_string,
+                upload_limit=upload_limit,
+                max_file_size=max_file_size,
+                collections=collections)
             print(_(u"""Successfully submitted {filename}!
 Be sure to look at the Media Processing Panel on your website to be sure it
 uploaded successfully.""".format(filename=filename)))
@@ -201,7 +257,7 @@ def parse_csv_file(file_contents):
     list_of_contents = file_contents.split('\n')
     key, lines = (list_of_contents[0].split(','),
                   list_of_contents[1:])
-    objects_dict = {}
+    objects_dict = OrderedDict()
 
     # Build a dictionary
     for index, line in enumerate(lines):

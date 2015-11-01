@@ -27,11 +27,12 @@ from mediagoblin import mg_globals
 from mediagoblin.tools.response import json_response
 from mediagoblin.tools.text import convert_to_tag_list_of_dicts
 from mediagoblin.tools.federation import create_activity, create_generator
-from mediagoblin.db.models import MediaEntry, ProcessingMetaData
+from mediagoblin.db.models import MediaEntry, ProcessingMetaData, Collection
 from mediagoblin.processing import mark_entry_failed
 from mediagoblin.processing.task import ProcessMedia
 from mediagoblin.notifications import add_comment_subscription
 from mediagoblin.media_types import sniff_media
+from mediagoblin.user_pages.lib import add_media_to_collection
 
 
 _log = logging.getLogger(__name__)
@@ -104,7 +105,8 @@ def submit_media(mg_app, user, submitted_file, filename,
                  title=None, description=None,
                  license=None, metadata=None, tags_string=u"",
                  upload_limit=None, max_file_size=None,
-                 callback_url=None, urlgen=None,):
+                 callback_url=None, urlgen=None,
+                 collections=None):
     """
     Args:
      - mg_app: The MediaGoblinApp instantiated for this process
@@ -118,13 +120,15 @@ def submit_media(mg_app, user, submitted_file, filename,
      - description: description for this media entry
      - license: license for this media entry
      - tags_string: comma separated string of tags to be associated
-       with this entry
+       with this entry.
+     - collections: collections to add this item to
      - upload_limit: size in megabytes that's the per-user upload limit
      - max_file_size: maximum size each file can be that's uploaded
      - callback_url: possible post-hook to call after submission
      - urlgen: if provided, used to do the feed_url update and assign a public
                ID used in the API (very important).
     """
+    collections = collections or []
     if upload_limit and user.uploaded >= upload_limit:
         raise UserPastUploadLimit()
 
@@ -204,6 +208,11 @@ def submit_media(mg_app, user, submitted_file, filename,
     # Create activity
     create_activity("post", entry, entry.actor)
     entry.save()
+
+    # Add to collections
+    for collection in collections:
+        add_media_to_collection(collection, entry)
+        create_activity("add", entry, user, target=collection)
 
     # Pass off to processing
     #

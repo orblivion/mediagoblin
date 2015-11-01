@@ -21,6 +21,7 @@ if six.PY2:  # this hack only work in Python 2
     reload(sys)
     sys.setdefaultencoding('utf-8')
 
+from collections import namedtuple
 import os
 import pytest
 
@@ -32,11 +33,13 @@ gi.require_version('Gst', '1.0')
 from gi.repository import Gst
 Gst.init(None)
 
-from mediagoblin.tests.tools import fixture_add_user
+from mediagoblin.tests.tools import fixture_add_user, fixture_add_collection
 from .media_tools import create_av
 from mediagoblin import mg_globals
-from mediagoblin.db.models import MediaEntry, User, LocalUser
+from mediagoblin.db.models import MediaEntry, User, LocalUser, Collection
 from mediagoblin.db.base import Session
+from mediagoblin.gmg_commands.batchaddmedia import batchaddmedia
+from mediagoblin.gmg_commands.addmedia import addmedia
 from mediagoblin.tools import template
 from mediagoblin.media_types.image import ImageMediaManager
 from mediagoblin.media_types.pdf.processing import check_prerequisites as pdf_check_prerequisites
@@ -234,12 +237,24 @@ class TestSubmission:
         form = context['mediagoblin/submit/start.html']['submit_form']
         assert form.file.errors == [u'Sorry, the file size is too big.']
 
-    def check_media(self, request, find_data, count=None):
+    def check_media(self,
+                    request,
+                    find_data,
+                    count=None,
+                    tag_slugs=None,
+                    collection_slugs=None):
         media = MediaEntry.query.filter_by(**find_data)
         if count is not None:
             assert media.count() == count
             if count == 0:
                 return
+        for media_item in media:
+            if collection_slugs is not None:
+                assert set(collection_slugs) == {
+                    c.slug for c in media_item.collections}
+            if tag_slugs is not None:
+                assert set(tag_slugs) == {
+                    tag['slug'] for tag in media_item.tags}
         return media[0]
 
     def test_tags(self):
@@ -421,3 +436,199 @@ class TestSubmission:
             size = os.stat(filename).st_size
             assert last_size > size
             last_size = size
+
+    def test_gmg_addmedia(self):
+        media_filename = 'mediagoblin/tests/test_submission/good.jpg'
+        license = 'http://creativecommons.org/publicdomain/zero/1.0/'
+        AddMediaArgs = namedtuple('AddMediaArgs', [
+            'celery',
+            'collections',
+            'conf_file',
+            'description',
+            'filename',
+            'license',
+            'tags',
+            'title',
+            'username',
+        ])
+        # Not initially in DB
+        self.check_media(None, {'title': u'Test Title'}, 0)
+        self.check_media(None, {'title': u'Test Title No Frills'}, 0)
+
+        # First, successfully add one without collections or tags
+        addmedia(
+            AddMediaArgs(
+                celery=False,
+                collections=None,
+                conf_file='mediagoblin.ini',
+                description='Test Description No Frills',
+                filename=media_filename,
+                license=license,
+                tags=None,
+                title='Test Title No Frills',
+                username='chris',
+            )
+        )
+        self.check_media(
+            None,
+            {
+                'title': u'Test Title No Frills',
+                'description': u'Test Description No Frills',
+                'license': license,
+            },
+            count=1,
+            tag_slugs=[],
+            collection_slugs=[],
+        )
+
+        # Now for the one with collections and tags:
+        # Make 1 of the 2 expected collections
+        collection_1 = fixture_add_collection(
+            name=u"Test Collection 1", user=self.our_user())
+        assert collection_1.slug == 'test-collection-1'
+
+        # Fail for Test Collection 2 not existing
+        with pytest.raises(ValueError):
+            addmedia(
+                AddMediaArgs(
+                    celery=False,
+                    collections='test-collection-1, test-collection-2',
+                    conf_file='mediagoblin.ini',
+                    description='Test Description',
+                    filename=media_filename,
+                    license=license,
+                    tags='test-tag-1, test-tag-2',
+                    title='Test Title',
+                    username='chris',
+                )
+            )
+        self.check_media(None, {'title': u'Test Title'}, 0)
+
+        # Make the second expected collection
+        collection_2 = fixture_add_collection(
+            name=u"Test Collection 2", user=self.our_user())
+        assert collection_2.slug == 'test-collection-2'
+
+        # Success!
+        addmedia(
+            AddMediaArgs(
+                celery=False,
+                collections='test-collection-1, test-collection-2',
+                conf_file='mediagoblin.ini',
+                description='Test Description',
+                filename=media_filename,
+                license=license,
+                tags='test-tag-1, test-tag-2',
+                title='Test Title',
+                username='chris',
+            )
+        )
+        self.check_media(
+            None,
+            {
+                'title': u'Test Title',
+                'description': u'Test Description',
+                'license': license,
+            },
+            count=1,
+            tag_slugs=[u'test-tag-1', u'test-tag-2'],
+            collection_slugs=[collection_1.slug, collection_2.slug]
+        )
+
+    def test_gmg_batchaddmedia(self):
+        csv_filename = 'mediagoblin/tests/test_submission/test.csv'
+        csv_no_collections_or_tags_filename = (
+            'mediagoblin/tests/test_submission/test_no_collections_or_tags.csv'
+        )
+        BatchAddMediaArgs = namedtuple('BatchAddMediaArgs', [
+            'celery',
+            'conf_file',
+            'metadata_path',
+            'username',
+        ])
+
+        # Not initially in DB
+        self.check_media(None, {'title': u'Test Title A'}, 0)
+        self.check_media(None, {'title': u'Test Title B'}, 0)
+        self.check_media(None, {'title': u'Test Title No Frills'}, 0)
+
+        # First, successfully add one without collections or tags
+        batchaddmedia(
+            BatchAddMediaArgs(
+                celery=False,
+                conf_file='mediagoblin.ini',
+                metadata_path=csv_no_collections_or_tags_filename,
+                username='chris',
+            )
+        )
+        self.check_media(
+            None,
+            {
+                'title': u'Test Title No Frills',
+                'description': u'Test Description No Frills',
+                'license': u'http://creativecommons.org/publicdomain/zero/1.0/',
+            },
+            count=1,
+            tag_slugs=[],
+            collection_slugs=[],
+        )
+
+        # Now for the ones with collections and tags:
+        # Make 2 of the 3 expected collections
+        # (Assert expected slugs because they're in the csv)
+        collection_1 = fixture_add_collection(
+            name=u"Test Collection 1", user=self.our_user())
+        assert collection_1.slug == 'test-collection-1'
+        collection_2 = fixture_add_collection(
+            name=u"Test Collection 2", user=self.our_user())
+        assert collection_2.slug == 'test-collection-2'
+
+        # Fail for Test Collection 3 not existing
+        with pytest.raises(ValueError):
+            batchaddmedia(
+                BatchAddMediaArgs(
+                    celery=False,
+                    conf_file='mediagoblin.ini',
+                    metadata_path=csv_filename,
+                    username='chris',
+                )
+            )
+        self.check_media(None, {'title': u'Test Title A'}, 0)
+        self.check_media(None, {'title': u'Test Title B'}, 0)
+
+        # Make the final expected collection
+        collection_3 = fixture_add_collection(
+            name=u"Test Collection 3", user=self.our_user())
+        assert collection_3.slug == 'test-collection-3'
+
+        # Success!
+        batchaddmedia(
+            BatchAddMediaArgs(
+                celery=False,
+                conf_file='mediagoblin.ini',
+                metadata_path=csv_filename,
+                username='chris',
+            )
+        )
+        self.check_media(
+            None,
+            {
+                'title': u'Test Title A',
+                'description': u'Test Description A',
+                'license': u'http://creativecommons.org/publicdomain/zero/1.0/',
+            },
+            count=1,
+            tag_slugs=[u'test-tag-1', u'test-tag-2'],
+            collection_slugs=[collection_1.slug]
+        )
+        self.check_media(
+            None,
+            {
+                'title': u'Test Title B',
+                'description': u'Test Description B',
+                'license': u'http://creativecommons.org/publicdomain/zero/1.0/',
+            },
+            count=1,
+            tag_slugs=[u'test-tag-3'],
+            collection_slugs=[collection_2.slug, collection_3.slug],
+        )
