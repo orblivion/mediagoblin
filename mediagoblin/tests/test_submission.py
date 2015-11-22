@@ -545,6 +545,7 @@ class TestSubmission:
             'conf_file',
             'metadata_path',
             'username',
+            'start',
         ])
 
         # Not initially in DB
@@ -591,10 +592,12 @@ class TestSubmission:
                     conf_file='mediagoblin.ini',
                     metadata_path=csv_filename,
                     username='chris',
+                    start=2,
                 )
             )
         self.check_media(None, {'title': u'Test Title A'}, 0)
         self.check_media(None, {'title': u'Test Title B'}, 0)
+        self.check_media(None, {'title': u'Test Title Should Not Exist'}, 0)
 
         # Make the final expected collection
         collection_3 = fixture_add_collection(
@@ -608,6 +611,7 @@ class TestSubmission:
                 conf_file='mediagoblin.ini',
                 metadata_path=csv_filename,
                 username='chris',
+                start=2,
             )
         )
         self.check_media(
@@ -632,3 +636,4 @@ class TestSubmission:
             tag_slugs=[u'test-tag-3'],
             collection_slugs=[collection_2.slug, collection_3.slug],
         )
+        self.check_media(None, {'title': u'Test Title Should Not Exist'}, 0)

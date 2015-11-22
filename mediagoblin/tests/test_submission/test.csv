@@ -1,3 +1,4 @@
 collections,license,tags,dc:description,dc:title,location
-test-collection-1,http://creativecommons.org/publicdomain/zero/1.0/,"test-tag-1, test-tag-2","Test Description A","Test Title A",good.jpg
+test-collection-nonexistent,http://creativecommons.org/publicdomain/zero/1.0/,"test-tag-a-billion","Test Description Should Not Exist","Test Title Should Not Exist",good.jpg
+test-collection-1,http://creativecommons.org/publicdomain/zero/1.0/,"test-tag-1, test-tag-2","Test Description A","Test Title A",evil.jpg
 "test-collection-2, test-collection-3",http://creativecommons.org/publicdomain/zero/1.0/,"test-tag-3","Test Description B","Test Title B",big.png

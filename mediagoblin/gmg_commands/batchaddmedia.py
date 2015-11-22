@@ -19,10 +19,12 @@ from __future__ import print_function
 import codecs
 from collections import OrderedDict
 import csv
+from itertools import islice
 import os
 
 import requests
 import six
+import traceback
 
 from six.moves.urllib.parse import urlparse
 
@@ -54,6 +56,12 @@ u"""Path to the csv file containing metadata information."""))
         '--celery',
         action='store_true',
         help=_("Don't process eagerly, pass off to celery. WARNING: If there is an error during processing (transcoding error, etc) you will not see it here, and this script will continue adding media from the csv. This may be relevant if, for instance, you're adding media to a collection, and the order of entries is important. If such an error were to occur in the middle of your csv, you might have to delete many items before retrying the problem file in order to keep order correct."))
+    subparser.add_argument(
+        '--start',
+        type=int,
+        default=1,
+        help=_(u"Start with this entry number (not line number!) in the csv. Ex: --start 5 starts with the 5th entry. --start 1 starts with the first entry (ie, default behavior)."))
+
 
 def _get_collection_slugs(media_data):
     return {
@@ -97,6 +105,7 @@ def batchaddmedia(args):
         os.environ['CELERY_ALWAYS_EAGER'] = 'true'
 
     app = commands_util.setup_app(args)
+    assert args.start >= 0
 
     files_uploaded, files_attempted = 0, 0
 
@@ -136,9 +145,11 @@ def batchaddmedia(args):
         media_metadata = parse_csv_file(contents)
 
     # Grab the collections, or fail before changing anything
-    all_collections_lookup = _get_collections_lookup(user, media_metadata)
+    all_collections_lookup = _get_collections_lookup(user, dict(
+        islice(media_metadata.iteritems(), args.start - 1, None)
+    ))
 
-    for media_id, media_data in media_metadata.iteritems():
+    for media_id, media_data in islice(media_metadata.iteritems(), args.start - 1, None):
         file_metadata = {
             k:v
             for (k, v)
@@ -157,6 +168,13 @@ def batchaddmedia(args):
         # Get all metadata entries starting with 'media' as variables and then
         # delete them because those are for internal use only.
         original_location = file_metadata['location']
+        url = urlparse(original_location)
+        filename = url.path.split()[-1]
+
+        print(_(u"""Submitting {filename}.
+If there is a problem submitting, and you fix it, and you don't edit the csv,
+you can continue where you left off by adding this option: --start {start_file_num}
+""".format(filename=filename, start_file_num=args.start + files_attempted - 1)))
 
         ### Pull the important media information for mediagoblin from the
         ### metadata, if it is provided.
@@ -175,10 +193,9 @@ Metadata was not uploaded.""".format(
                 error_path=exc.path[0],
                 error_msg=exc.message))
             print(error)
+            if args.stop_on_error:
+                return
             continue
-
-        url = urlparse(original_location)
-        filename = url.path.split()[-1]
 
         collections = [
             all_collections_lookup[collection_slug]
@@ -224,11 +241,17 @@ uploaded successfully.""".format(filename=filename)))
         except FileUploadLimit:
             print(_(
 u"FAIL: This file is larger than the upload limits for this site."))
+            if args.stop_on_error:
+                return
         except UserUploadLimit:
             print(_(
 "FAIL: This file will put this user past their upload limits."))
+            if args.stop_on_error:
+                return
         except UserPastUploadLimit:
             print(_("FAIL: This user is already past their upload limits."))
+            if args.stop_on_error:
+                return
     print(_(
 "{files_uploaded} out of {files_attempted} files successfully submitted".format(
         files_uploaded=files_uploaded,
