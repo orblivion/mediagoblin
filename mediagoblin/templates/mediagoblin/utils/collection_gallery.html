@@ -36,6 +36,8 @@
 
             {% if item.note %}
               <a href="{{ obj_url }}">{{ item.note }}</a>
+            {% elif obj.title %}
+              <a href="{{ obj_url }}">{{ obj.title }}</a>
             {% endif %}
 	    {% if request.user and
                   (item.in_collection.actor == request.user.id or
