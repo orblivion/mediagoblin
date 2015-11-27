@@ -29,7 +29,7 @@ from sqlalchemy import Column, Integer, Unicode, UnicodeText, DateTime, \
 from sqlalchemy.orm import relationship, backref, with_polymorphic, validates, \
         class_mapper
 from sqlalchemy.orm.collections import attribute_mapped_collection
-from sqlalchemy.sql import and_
+from sqlalchemy.sql import and_, or_
 from sqlalchemy.sql.expression import desc
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.util import memoized_property
@@ -1132,13 +1132,32 @@ class Collection(Base, CollectionMixin, CommentingMixin):
     COMMENT_TYPE = "core-comments"
     USER_DEFINED_TYPE = "core-user-defined"
 
-    def get_collection_items(self, ascending=False):
+    def get_collection_items(self, ascending=True, processed_only=False):
         #TODO, is this still needed with self.collection_items being available?
-        order_col = CollectionItem.position
+        order_col = CollectionItem.position, CollectionItem.id
         if not ascending:
-            order_col = desc(order_col)
-        return CollectionItem.query.filter_by(
-            collection=self.id).order_by(order_col)
+            order_col = map(desc, order_col)
+        items = CollectionItem.query.filter_by(
+            collection=self.id).order_by(*order_col)
+
+        if processed_only:
+            return items.join(
+                    CollectionItem.object_helper
+                ).outerjoin(
+                    # inner join would filter out non-MediaEntry collection items
+                    MediaEntry,
+                    and_(
+                        GenericModelReference.obj_pk==MediaEntry.id,
+                        GenericModelReference.model_type==MediaEntry.__tablename__
+                    )
+                ).filter(
+                    or_(
+                        MediaEntry.state=='processed',
+                        GenericModelReference.model_type!=MediaEntry.__tablename__
+                    )
+                )
+        else:
+            return items
 
     def __repr__(self):
         safe_title = self.title.encode('ascii', 'replace')
@@ -1150,7 +1169,7 @@ class Collection(Base, CollectionMixin, CommentingMixin):
 
     def serialize(self, request):
         # Get all serialized output in a list
-        items = [i.serialize(request) for i in self.get_collection_items()]
+        items = [i.serialize(request) for i in self.get_collection_items(processed_only=True)]
         return {
             "totalItems": self.num_items,
             "url": self.url_for_self(request.urlgen, qualified=True),

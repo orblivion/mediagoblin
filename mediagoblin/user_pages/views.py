@@ -377,7 +377,7 @@ def user_collection(request, page, url_user=None):
     if not collection:
         return render_404(request)
 
-    cursor = collection.get_collection_items()
+    cursor = collection.get_collection_items(processed_only=True)
 
     pagination = Pagination(page, cursor)
     collection_items = pagination()
@@ -398,7 +398,7 @@ def user_collection(request, page, url_user=None):
 @user_not_banned
 @active_user_from_url
 def collection_list(request, url_user=None):
-    """A User-defined Collection"""
+    """List of User-defined Collections"""
     collections = Collection.query.filter_by(
         get_actor=url_user)
 
@@ -470,6 +470,8 @@ def collection_confirm_delete(request, collection):
             collection.get_public_id(request.urlgen)
 
             # Delete all the associated collection items
+            # REVIEWER NOTE - Query for both visible and invisible, we want to
+            # delete them all.
             for item in collection.get_collection_items():
                 obj = item.get_object()
                 obj.save()
