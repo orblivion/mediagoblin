@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #}
+{%- from "mediagoblin/utils/pagination.html" import render_pagination %}
 {%- extends "mediagoblin/base.html" %}
 
 {% block title %}
@@ -69,5 +70,9 @@
   {% endif %}
 
   {{ media_grid(request, collections, col_number=5) }}
+
+  <div class="clear"></div>
+
+  {{ render_pagination(request, pagination) }}
 
 {% endblock %}
