@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #}
+{%- from "mediagoblin/utils/pagination.html" import render_pagination %}
 {%- extends "mediagoblin/base.html" %}
 
 {% block title %}
@@ -22,6 +23,30 @@
     {{ username }}'s collections
   {%- endtrans %} &mdash; {{ super() }}
 {% endblock %}
+
+{% macro media_grid(request, collections, col_number=5) %}
+  <div class="thumb_gallery">
+    {% for row in collections|batch(col_number) %}
+      <div class="row thumb_row
+                 {%- if loop.first %} thumb_row_first
+                 {%- elif loop.last %} thumb_row_last{% endif %}">
+        {% for coll in row %}
+          {% set coll_url = coll.url_for_self(request.urlgen) %}
+          <div class="three columns media_thumbnail thumb_entry
+                     {%- if loop.first %} thumb_entry_first
+                     {%- elif loop.last %} thumb_entry_last{% endif %}">
+            <a href="{{ coll_url }}">
+              <img src="{{ coll.thumb_url }}" />
+            </a>
+            {% if coll.title %}
+              <a href="{{ coll_url }}">{{ coll.title }}</a>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+  </div>
+{%- endmacro %}
 
 {% block mediagoblin_content -%}
   <h1>
@@ -44,13 +69,10 @@
     {% endif %}
   {% endif %}
 
-  <ul>
-    {% for coll in collections %}
-      {%- set coll_url = coll.url_for_self(request.urlgen) %}
-      <li>
-        <a href="{{ coll_url }}">{{ coll.title }}</a>
-      </li>
-    {% endfor %}
-  </ul>
+  {{ media_grid(request, collections, col_number=5) }}
+
+  <div class="clear"></div>
+
+  {{ render_pagination(request, pagination) }}
 
 {% endblock %}

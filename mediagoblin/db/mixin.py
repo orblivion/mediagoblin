@@ -468,6 +468,30 @@ class CollectionMixin(GenerateSlugMixin, GeneratePublicIDMixin):
         item.save(commit=commit)
         return item 
 
+    @property
+    def thumb_url(self):
+        """Return a thumbnail URL from the first MediaEntry (for usage
+        in templates) Will return either the real thumbnail or a default
+        fallback icon."""
+        from mediagoblin.db.models import GenericModelReference, MediaEntry
+        from mediagoblin.media_types.image import ImageMediaManager
+
+        preview_entry = self.get_collection_items(
+            processed_only=True
+        ).filter(
+            GenericModelReference.model_type==MediaEntry.__tablename__
+        ).first()
+        if preview_entry:
+            return preview_entry.get_object().thumb_url
+        else:
+            # No media in the collection yet. Get the fallback icon for
+            # images and return static URL.
+            return self._app.staticdirector(ImageMediaManager.default_thumb)
+            # REVIEWER NOTE: The other thumb_url function mentiones a
+            # TODO for a generic fallback in case MEDIA_MANAGER doesn't
+            # specify one. It sounds like that's what I did here?
+
+
 class CollectionItemMixin(object):
     @property
     def note_html(self):

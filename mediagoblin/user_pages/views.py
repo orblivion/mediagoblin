@@ -397,16 +397,21 @@ def user_collection(request, page, url_user=None):
 
 @user_not_banned
 @active_user_from_url
-def collection_list(request, url_user=None):
+@uses_pagination
+def collection_list(request, page, url_user=None):
     """List of User-defined Collections"""
-    collections = Collection.query.filter_by(
+    cursor = Collection.query.filter_by(
         get_actor=url_user)
+
+    pagination = Pagination(page, cursor)
+    collections = pagination()
 
     return render_to_response(
         request,
         'mediagoblin/user_pages/collection_list.html',
         {'user': url_user,
-         'collections': collections})
+         'collections': collections,
+         'pagination': pagination})
 
 
 @get_user_collection_item
